@@ -1,6 +1,15 @@
 #!/bin/bash
 
+config_file="$HOME/.ssh/passbolt.json"
 music_file="$(brew --prefix)/share/pass/passbolt.mp3"
+
+
+if [[ ! -f "$config_file" ]]; then
+    echo "Configuration file not found at $config_file."
+    echo "Please create the configuration file by running the following command:"
+    echo "passbolt configure --config $config_file --serverAddress https://passbolt-instance --userPassword '1234' --userPrivateKeyFile 'keys/privatekey.asc'"
+    exit 1
+fi
 
 # Function to stop music
 finish() {
@@ -17,7 +26,7 @@ music_pid=$!
 trap finish INT
 
 # List resources with the given search string in Name or Username
-result=$(passbolt --config ~/.ssh/passbolt.json list resource --filter "matches(Name, '(?i)$1') || matches(Username, '(?i)$1')")
+result=$(passbolt --config "$config_file" list resource --filter "matches(Name, '(?i)$1') || matches(Username, '(?i)$1')")
 
 # Check if result is empty
 if [ -z "$result" ]; then
@@ -58,7 +67,7 @@ else
 fi
 
 # Obtain the selected resource and get the password
-password=$(passbolt --config ~/.ssh/passbolt.json get resource --id "$resource_id" | awk -F: '/Password/ {printf $2}' | tr -d '[:space:]' | tr -d '\n')
+password=$(passbolt --config "$config_file" get resource --id "$resource_id" | awk -F': ' '/Password/ {print substr($0, index($0,$2))}' | tr -d '[:space:]' | tr -d '\n')
 
 # Copy the password to the clipboard
 echo "$password" | pbcopy
