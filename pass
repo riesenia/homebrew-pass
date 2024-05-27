@@ -1,0 +1,67 @@
+#!/bin/bash
+
+music_file="$(brew --prefix)/share/pass/passbolt.mp3"
+
+# Function to stop music
+finish() {
+    if [ -n "$music_pid" ]; then
+        kill "$music_pid" > /dev/null 2>&1
+        exit 0
+    fi
+}
+
+afplay $music_file &
+music_pid=$!
+
+# Trap Ctrl+C (SIGINT) and stop the music before exiting
+trap finish INT
+
+# List resources with the given search string in Name or Username
+result=$(passbolt --config ~/.ssh/passbolt.json list resource --filter "matches(Name, '(?i)$1') || matches(Username, '(?i)$1')")
+
+# Check if result is empty
+if [ -z "$result" ]; then
+    printf "\n\033[30m\033[41m\033[1mNo resource found!\033[0m\n\n"
+    finish
+fi
+
+printf '\n\033[35m  ██▓███   ▄▄▄        ██████          ▄▄▄▄    ▒█████   ██▓  ▄▄▄█████▓ ▐██▌ \n ▓██░  ██▒▒████▄    ▒██    ▒  ██████ ▓█████▄ ▒██▒  ██▒▓██▒  ▓  ██▒ ▓▒ ▐██▌ \n ▓██░ ██▓▒▒██  ▀█▄  ░ ▓██▄  ▒██    ▒ ▒██▒ ▄██▒██░  ██▒▒██░  ▒ ▓██░ ▒░ ▐██▌ \n ▒██▄█▓▒ ▒░██▄▄▄▄██   ▒   ██░ ▓██▄  ▒▒██░█▀  ▒██   ██░▒██░  ░ ▓██▓ ░  ▓██▒ \n ▒██▒ ░  ░ ▓█   ▓██▒▒██████▒  ▒   ██▒░▓█  ▀█▓░ ████▓▒░░██████▒▒██▒ ░  ▒▄▄  \n ▒▓▒░ ░  ░ ▒▒   ▓▒█░▒ ▒▓▒ ▒ ▒██████▒░░▒▓███▀▒░ ▒░▒░▒░ ░ ▒░▓  ░▒ ░░    ░▀▀▒ \n ░▒ ░       ▒   ▒▒ ░░ ░▒  ░ ▒ ▒▓▒ ▒ ░▒░▒   ░   ░ ▒ ▒░ ░ ░ ▒  ░  ░     ░  ░ \n ░░         ░   ▒   ░  ░    ░ ░▒  ░   ░    ░ ░ ░ ░ ▒    ░ ░   ░          ░ \n                ░  ░        ░  ░  ░   ░          ░ ░      ░  ░        ░    \033[0m\n\n'
+
+# Check if any resource is found
+count=$(echo "$result" | awk 'NR>1 && NF {count++} END {print count}')
+
+if [ "$count" -eq 0 ]; then
+    finish
+
+elif [ "$count" -eq 1 ]; then
+    printf "$result\n" | awk 'BEGIN {FS="|"; HFS="   "; OFS="\033[0m\033[2m\033[90m | \033[0m\033[97m"} NR==1 {print "\n   \033[0m\033[2m\033[90m\033[3m" $3 HFS $4 HFS $5 "\033[0m"} NR>1 && NF {print " \033[1m\033[35m" NR-1 " \033[0m\033[97m\033[1m" $3 OFS $4 OFS $5 "\033[0m\n"}'
+
+    # Only one resource found, obtain it
+    resource_id=$(echo "$result" | awk -v n="1" 'NR==n+1 {print $1}')
+
+else
+    # Multiple resources found, list them and let the user choose
+    printf "$result\n" | awk 'BEGIN {FS="|"; HFS="   "; OFS="\033[0m\033[2m\033[90m | \033[0m\033[97m"} NR==1 {print "\n   \033[0m\033[2m\033[90m\033[3m" $3 HFS $4 HFS $5 "\033[0m"} NR>1 && NF {print " \033[1m\033[35m" NR-1 " \033[0m\033[97m\033[1m" $3 OFS $4 OFS $5 "\033[0m"}'
+
+    # Prompt user to choose a number
+    read -p $'\n\e[35m\e[1m Enter the number of resource: \033[7m' selected
+    printf '\033[0m\n'
+
+    # Validate user input
+    if ! [[ "$selected" =~ ^[0-9]+$ ]] || [ "$selected" -lt "1" ] || [ "$selected" -gt "$count" ]; then
+        printf " \033[30m\033[41m\033[1mInvalid input. Please enter a valid number!\033[0m\n\n"
+        finish
+    fi
+
+    # Get the resource ID based on user's choice
+    resource_id=$(echo "$result" | awk -v n="$selected" 'NR==n+1 {print $1}')
+fi
+
+# Obtain the selected resource and get the password
+password=$(passbolt --config ~/.ssh/passbolt.json get resource --id "$resource_id" | awk -F: '/Password/ {printf $2}' | tr -d '[:space:]' | tr -d '\n')
+
+# Copy the password to the clipboard
+echo "$password" | pbcopy
+
+printf " \033[1m\033[42mPassword copied to clipboard!\033[0m\n\n"
+finish
