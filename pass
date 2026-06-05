@@ -66,11 +66,43 @@ else
     resource_id=$(echo "$result" | awk -v n="$selected" 'NR==n+1 {print $1}')
 fi
 
-# Obtain the selected resource and get the password
-password=$(passbolt --config "$config_file" get resource --id "$resource_id" | awk -F': ' '/Password/ {print substr($0, index($0,$2))}' | tr -d '[:space:]' | tr -d '\n')
+# Obtain the selected resource as JSON (v0.5.0 exposes the full secret, incl. TOTP)
+json=$(passbolt --config "$config_file" get resource --id "$resource_id" --json)
 
-# Copy the password to the clipboard
-echo "$password" | pbcopy
+password=$(echo "$json" | jq -r '.password // empty')
+totp_seed=$(echo "$json" | jq -r '.secret.totp.secret_key // empty')
 
-printf " \033[1m\033[42mPassword copied to clipboard!\033[0m\n\n"
+# If the resource has a TOTP secret, compute the current code locally
+totp_code=""
+if [ -n "$totp_seed" ]; then
+    if ! command -v oathtool > /dev/null 2>&1; then
+        printf " \033[30m\033[43m\033[1moathtool not found — run: brew install oath-toolkit\033[0m\n\n"
+    else
+        totp_period=$(echo "$json" | jq -r '.secret.totp.period // 30')
+        totp_digits=$(echo "$json" | jq -r '.secret.totp.digits // 6')
+        totp_algo=$(echo "$json"   | jq -r '(.secret.totp.algorithm // "SHA1") | ascii_downcase')
+        totp_code=$(oathtool --totp="$totp_algo" --base32 \
+            --digits="$totp_digits" --time-step-size="${totp_period}s" "$totp_seed")
+        # Seconds remaining in the current TOTP window
+        remaining=$(( totp_period - ($(date +%s) % totp_period) ))
+    fi
+fi
+
+if [ -n "$password" ]; then
+    # Password (+ optional TOTP): copy password, show the code on screen
+    printf "%s" "$password" | pbcopy
+    if [ -n "$totp_code" ]; then
+        printf " \033[1m\033[42mPassword copied to clipboard!\033[0m\n"
+        printf " \033[1m\033[44m TOTP: %s \033[0m \033[2m\033[90m(%ss left)\033[0m\n\n" "$totp_code" "$remaining"
+    else
+        printf " \033[1m\033[42mPassword copied to clipboard!\033[0m\n\n"
+    fi
+elif [ -n "$totp_code" ]; then
+    # TOTP-only resource: copy the code straight to the clipboard
+    printf "%s" "$totp_code" | pbcopy
+    printf " \033[1m\033[44m TOTP code %s copied to clipboard!\033[0m \033[2m\033[90m(%ss left)\033[0m\n\n" "$totp_code" "$remaining"
+else
+    printf " \033[30m\033[41m\033[1mNo password or TOTP found in this resource!\033[0m\n\n"
+fi
+
 finish
